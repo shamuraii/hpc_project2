@@ -70,7 +70,7 @@ The results are saved in a dist matrix
 The distance from src->des is available in dist[src][des]
 ** Note this is transposed compared to the connections found in m
 */
-void dijkstra_row(int m[M_SIZE][M_SIZE], int dist[M_SIZE][M_SIZE]) {
+void dijkstra_all(int m[M_SIZE][M_SIZE], int dist[M_SIZE][M_SIZE]) {
     for (int i=0; i<M_SIZE; i++)
         dijkstra_one(m, i, dist[i]);
 }
@@ -105,7 +105,7 @@ int main() {
     printf("M = \n");
     print_m(m);
     int sp[M_SIZE][M_SIZE];
-    dijkstra_row(m,sp);
+    dijkstra_all(m,sp);
     printf("SP = \n");
     print_m(sp);
 
