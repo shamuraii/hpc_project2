@@ -86,13 +86,7 @@ int main() {
     // Create the matrix of relationships
     // Randomly set every connection to 0 or 1 with SPLIT = % of connections (to adjust sparcity)
     int split = 5;
-    /*
-    Name a more iconic duo than "using malloc" and "program breaking"
-    int **m = (int**)malloc(M_SIZE * sizeof(int*));
-    for (int i=0; i < M_SIZE; i++)
-        m[i] = (int*)malloc(M_SIZE * sizeof(int));
-    */
-    int m[M_SIZE][M_SIZE];
+    int (*m)[M_SIZE] = malloc(sizeof(int[M_SIZE][M_SIZE]));
     for (int i=0; i < M_SIZE; i++) {
         for (int j=0; j < M_SIZE; j++) {
             m[i][j] = rand()%100 < split;
@@ -109,12 +103,7 @@ int main() {
     printf("SP = \n");
     print_m(sp);
 
-    /*
-    Code from a more ambitious me tried using dynamic memory :')
-    for (int i=0; i < M_SIZE; i++)
-        free(m[i]);
     free(m);
-    */
 
     // Equation to get runtime in seconds, see earlier comment for source
     clock_t end = clock();
