@@ -1,0 +1,25 @@
+#!/bin/bash
+#SBATCH --job-name=test
+#SBATCH --nodes=1 #number of nodes requested
+#SBATCH --ntasks-per-node=1
+#SBATCH --cluster=smp # mpi, gpu and smp are available in H2P
+#SBATCH --partition=smp # available: smp, high-mem, opa, gtx1080, titanx, k40
+#SBATCH --time=10:00 # walltime in dd-hh:mm format
+#SBATCH --qos=normal # enter long if walltime is greater than 3 days
+#SBATCH --output=tight.out # the file that contains output
+
+module purge #make sure the modules environment is sane
+module load intel/2017.1.132 intel-mpi/2017.1.132
+
+gcc -std=c99 tight.c -o tight.o -lpthread
+sbcast $SLURM_SUBMIT_DIR/tight.o $SLURM_SCRATCH/tight.o # Copy inputs to scratch
+cd $SLURM_SCRATCH #change directory
+
+# Set a trap to copy any temp files you may need
+run_on_exit(){
+ cp -r $SLURM_SCRATCH/* $SLURM_SUBMIT_DIR
+}
+trap run_on_exit EXIT
+
+./tight.o
+crc-job-stats.py # gives stats of job, wall time, etc. 
