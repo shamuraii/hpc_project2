@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=test
+#SBATCH --job-name=serial
 #SBATCH --nodes=1 #number of nodes requested
 #SBATCH --ntasks-per-node=1
 #SBATCH --cluster=smp # mpi, gpu and smp are available in H2P
