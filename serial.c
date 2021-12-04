@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <time.h>
 
-#define M_SIZE 100
+#define M_SIZE 1000
 #define NC (M_SIZE*10 - 1) // Weight for No Connection (NC): Must be > M_SIZE in practice
 
 // I wrote these prints as a proof-of-concept regarding passing a single row of the matrix to a function
@@ -96,14 +96,23 @@ int main() {
         m[i][i] = 1;
     }
 
-    printf("M = \n");
-    print_m(m);
-    int sp[M_SIZE][M_SIZE];
-    dijkstra_all(m,sp);
-    printf("SP = \n");
-    print_m(sp);
+    int (*dist)[M_SIZE] = malloc(sizeof(int[M_SIZE][M_SIZE]));
+    dijkstra_all(m,dist);
+
+    // I disabled printing results when M_SIZE is large for many reasons
+    // 1: when large it is hard/impossible to compare at a glance
+    // 2: program spends SIGNIFICANT amount of time just printing and this makes the threading
+    // improvements seem worse than they really are.
+    // I have included results of both small arrays (proof of working) and large ones (just the runtime for comparison)
+    if (M_SIZE <= 100) {
+        printf("M = \n");
+        print_m(m);
+        printf("Dist = \n");
+        print_m(dist);
+    }
 
     free(m);
+    free(dist);
 
     // Equation to get runtime in seconds, see earlier comment for source
     clock_t end = clock();
