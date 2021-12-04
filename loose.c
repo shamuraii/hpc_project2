@@ -1,22 +1,13 @@
+#include <string.h> // for memcpy
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <time.h>
 #include <pthread.h>
+#include <mpi.h>
 
-#define M_SIZE 1000
+#define M_SIZE 100
 #define NC 999 // Weight for No Connection (NC): Must be > M_SIZE in practice
-#define NUM_THREADS 10
-
-// Use struct to pass data to pthreads on creation
-// Based on https://hpc-tutorials.llnl.gov/posix/example_code/hello_arg2.c
-struct thread_data {
-    int thread_id;
-    int start;
-    int end;
-    int (*d)[M_SIZE];
-    int (*m)[M_SIZE];
-};
 
 // I wrote these prints as a proof-of-concept regarding passing a single row of the matrix to a function
 // And also to see the matrix was generated sufficiently
@@ -75,36 +66,17 @@ void dijkstra_one(int m[M_SIZE][M_SIZE], int src, int dist[M_SIZE]) {
     }
 }
 
-/*
-This function gets the SP weight from all nodes to all other nodes
-The results are saved in a dist matrix
-The distance from src->des is available in dist[src][des]
-** Note this is transposed compared to the connections found in m
-*/
-void dijkstra_all(int m[M_SIZE][M_SIZE], int dist[M_SIZE][M_SIZE]) {
-    for (int i=0; i<M_SIZE; i++)
-        dijkstra_one(m, i, dist[i]);
-}
-
-void *dijkstra_some(void *threadarg) {
-    struct thread_data *my_data;
-    my_data = (struct thread_data *) threadarg;
-    int taskid = my_data->thread_id;
-    int start = my_data->start;
-    int end = my_data->end;
-    int (*m)[M_SIZE] = my_data->m;
-    int (*dist)[M_SIZE] = my_data->d;
-
-    for (int i=start; i<=end; i++)
-        dijkstra_one(m,i,dist[i]);
-}
-
 int main() {
     // Track the runtime of the program (measures CPU time, NOT wall time, which is desired)
     // Learned from https://stackoverflow.com/questions/5248915/execution-time-of-c-program
     clock_t begin = clock();
 
-    // Set the seed so the matrix M is deterministic (for testing)
+    // Set the seed so the matrix M is deterministic
+    // In "real life", this identical matrix could be recieved by all files via some
+    // external source, such as a file, network, or other shared resource
+    // Alternatively, the main world could create the matrix and share it with all other nodes,
+    // I am opting not to do that since it seems like it is not the intention of this project
+    // For this project, I will simply have each thread create identical (arbitray) matrices
     srand(0);
 
     // Create the matrix of relationships
@@ -120,63 +92,78 @@ int main() {
         m[i][i] = 1;
     }
 
-    pthread_t threads[NUM_THREADS]; // Array of all pthread IDs
-    int starts[NUM_THREADS]; // Array of starting values for SP computation for each thread
-    int ends[NUM_THREADS]; // Array of ending values for SP computation for each thread
-    struct thread_data thread_data_array[NUM_THREADS]; // Array of parameters to pass to each thread
+    // Initialize the MPI environment
+    MPI_Init(NULL, NULL);
+    // Get the number of processes
+    int world_size;
+    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+    // Get the rank of the process
+    int world_rank;
+    MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
+    // Get the name of the processor
+    char processor_name[MPI_MAX_PROCESSOR_NAME];
+    int name_len;
+    MPI_Get_processor_name(processor_name, &name_len);
 
-    // Divide the workload (somewhat) evenly amongst the threads by setting their start/end indeces
-    for (int i=0; i < NUM_THREADS; i++) {
-        starts[i] = (M_SIZE / NUM_THREADS) * i;
-        ends[i] = (M_SIZE / NUM_THREADS) * (i+1) - 1;
-    }
-    // To account for M_SIZE not being evenly divisible by NUM_THREADS, the last thread handles the remaining values
-    ends[NUM_THREADS-1] = M_SIZE-1;
+    int start, end; // FIRST and LAST node to calculate SP weights for
+    // Use world_rank to determine role in computations
+    start = (M_SIZE / world_size) * world_rank;
+    end = (M_SIZE / world_size) * (world_rank + 1) - 1;
+    // Last node computes a the remainder in case M_SIZE not evenly divisible by WORLD_SIZE
+    if (world_rank == world_size - 1)
+        end = M_SIZE - 1;
 
-    printf("Starts = ");
-    print_row(starts,NUM_THREADS);
-    printf("Ends = ");
-    print_row(ends,NUM_THREADS);
+    // Print off a message to signal node is running
+    printf("Processor %s, rank %d / %d: start = %d, end = %d\n", processor_name, world_rank, world_size, start, end);
 
+    // Run dijkstras on this processors portion of the nodes
     int (*dist)[M_SIZE] = malloc(sizeof(int[M_SIZE][M_SIZE]));
-    for (int t=0; t<NUM_THREADS; t++) {
-        thread_data_array[t].thread_id = t;
-        thread_data_array[t].start = starts[t];
-        thread_data_array[t].end = ends[t];
-        thread_data_array[t].m = m;
-        thread_data_array[t].d = dist;
-
-        printf("Creating thread %d\n", t);
-        int rc = pthread_create(&threads[t], NULL, dijkstra_some, (void *) &thread_data_array[t]);
-        if (rc) {
-            printf("ERROR; return code from pthread_create() is %d\n", rc);
-            exit(-1);
-        }
-        //dijkstra_some((void *) &thread_data_array[t]);
-    }
-
-    for (int t=0; t<NUM_THREADS; t++) {
-        pthread_join(threads[t],NULL);
-    }
+    for (int i=start; i<=end; i++)
+        dijkstra_one(m,i,dist[i]);
     
-    // I disabled printing results when M_SIZE is large for many reasons
-    // 1: when large it is hard/impossible to compare at a glance
-    // 2: program spends SIGNIFICANT amount of time just printing and this makes the threading
-    // improvements seem worse than they really are.
-    // I have included results of both small arrays (proof of working) and large ones (just the runtime for comparison)
-    if (M_SIZE <= 100) {
-        printf("M = \n");
-        print_m(m);
-        printf("Dist = \n");
-        print_m(dist);
-    }
+    // Share data with processor 0
+    // Code to send MxM matrix at once from https://stackoverflow.com/questions/5901476/sending-and-receiving-2d-array-over-mpi
+    if (world_rank != 0) {
+        printf("Proc: %d sending dist\n", world_rank);
+        MPI_Send(&(dist[0][0]), M_SIZE*M_SIZE, MPI_INT, 0, 0, MPI_COMM_WORLD);
+    } else {
+        // This is PROC_0 and is responsible for assembling and combining all results together
+        // Create buffer for results to be recieved into
+        int (*proc_dist)[M_SIZE] = malloc(sizeof(int[M_SIZE][M_SIZE]));
+        for (int i = 1; i < world_size; i++) {
+            // Await distance matrix results from PROC_i
+            MPI_Recv(&(proc_dist[0][0]), M_SIZE*M_SIZE, MPI_INT, i, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
-    free(m);
-    free(dist);
+            // Use world_rank to determine role in computations
+            int proc_start = (M_SIZE / world_size) * i;
+            int proc_end = (M_SIZE / world_size) * (i + 1) - 1;
+            if (i == world_size - 1)
+                proc_end = M_SIZE - 1;
+
+            // Combine relevant rows into main dist matrix
+            for (int r=proc_start; r <= proc_end; r++)
+                memcpy(dist[r], proc_dist[r], sizeof(int[M_SIZE]));
+        }
+        free(proc_dist);
+
+        // *lead* node prints the matrix (for debugging)
+        if (world_rank == 0) {
+            // Printing will be interrupted by other processor prints, and is not necessary outside testing
+            if (M_SIZE <= 100) {
+                printf("M = \n");
+                print_m(m);
+                printf("dist = \n");
+                print_m(dist);
+            }
+        }
+    }
 
     // Equation to get runtime in seconds, see earlier comment for source
-    clock_t end = clock();
-    double run_time = (double)(end - begin) / CLOCKS_PER_SEC;
+    clock_t stop = clock();
+    double run_time = (double)(stop - begin) / CLOCKS_PER_SEC;
     // Display results
     printf("\nProgram runtime: %f\n", run_time);
+
+    // Finalize the MPI environment.
+    MPI_Finalize();
 }
