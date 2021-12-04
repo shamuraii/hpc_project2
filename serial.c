@@ -4,17 +4,17 @@
 #include <time.h>
 
 #define M_SIZE 100
-#define NC 999 // Weight for No Connection (NC): Must be > M_SIZE in practice
+#define NC (M_SIZE*10 - 1) // Weight for No Connection (NC): Must be > M_SIZE in practice
 
 // I wrote these prints as a proof-of-concept regarding passing a single row of the matrix to a function
 // And also to see the matrix was generated sufficiently
-void print_row(const int r[M_SIZE]) {
+void print_row(int r[M_SIZE]) {
     // Print the values of the row
     for (int j=0; j<M_SIZE; j++)
         printf("%d ", r[j]);
     printf("\n");
 }
-void print_m(const int m[M_SIZE][M_SIZE]) {
+void print_m(int m[M_SIZE][M_SIZE]) {
     // Print matrix one row at a time
     for (int i=0; i < M_SIZE; i++)
         print_row(m[i]);
@@ -39,7 +39,7 @@ This function takes in M, and a source point (0:M_SIZE-1)
 It then computes the least jumps from src to all nodes
 The distance from src->X is saved in dist[X]
 */
-void dijkstra_one(const int m[M_SIZE][M_SIZE], const int src, int dist[M_SIZE]) {
+void dijkstra_one(int m[M_SIZE][M_SIZE], int src, int dist[M_SIZE]) {
     // Bounds check
     if (src >= M_SIZE) {
         printf("DIJKSTRA_ONE OUT_OF_BOUNDS: %d",src);
@@ -70,7 +70,7 @@ The results are saved in a dist matrix
 The distance from src->des is available in dist[src][des]
 ** Note this is transposed compared to the connections found in m
 */
-void dijkstra_row(const int m[M_SIZE][M_SIZE], int dist[M_SIZE][M_SIZE]) {
+void dijkstra_row(int m[M_SIZE][M_SIZE], int dist[M_SIZE][M_SIZE]) {
     for (int i=0; i<M_SIZE; i++)
         dijkstra_one(m, i, dist[i]);
 }
@@ -84,11 +84,18 @@ int main() {
     srand(0);
 
     // Create the matrix of relationships
-    // Randomly set every connection to 0 or 1
+    // Randomly set every connection to 0 or 1 with SPLIT = % of connections (to adjust sparcity)
+    int split = 5;
+    /*
+    Name a more iconic duo than "using malloc" and "program breaking"
+    int **m = (int**)malloc(M_SIZE * sizeof(int*));
+    for (int i=0; i < M_SIZE; i++)
+        m[i] = (int*)malloc(M_SIZE * sizeof(int));
+    */
     int m[M_SIZE][M_SIZE];
     for (int i=0; i < M_SIZE; i++) {
         for (int j=0; j < M_SIZE; j++) {
-            m[i][j] = rand() % 2;
+            m[i][j] = rand()%100 < split;
         }
         // Set all diagonals to 1
         // (Likely unecessary, but may cause unplanned issues and is logical to me anyway)
@@ -101,6 +108,13 @@ int main() {
     dijkstra_row(m,sp);
     printf("SP = \n");
     print_m(sp);
+
+    /*
+    Code from a more ambitious me tried using dynamic memory :')
+    for (int i=0; i < M_SIZE; i++)
+        free(m[i]);
+    free(m);
+    */
 
     // Equation to get runtime in seconds, see earlier comment for source
     clock_t end = clock();
