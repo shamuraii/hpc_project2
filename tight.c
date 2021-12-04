@@ -5,20 +5,31 @@
 #include <pthread.h>
 
 #define M_SIZE 100
-#define NC (M_SIZE*10 - 1) // Weight for No Connection (NC): Must be > M_SIZE in practice
+#define NC 999 // Weight for No Connection (NC): Must be > M_SIZE in practice
+#define NUM_THREADS 10
+
+// Use struct to pass data to pthreads on creation
+// Based on https://hpc-tutorials.llnl.gov/posix/example_code/hello_arg2.c
+struct thread_data {
+    int thread_id;
+    int start;
+    int end;
+    int (*d)[M_SIZE];
+    int (*m)[M_SIZE];
+};
 
 // I wrote these prints as a proof-of-concept regarding passing a single row of the matrix to a function
 // And also to see the matrix was generated sufficiently
-void print_row(int r[M_SIZE]) {
+void print_row(int r[], int N) {
     // Print the values of the row
-    for (int j=0; j<M_SIZE; j++)
+    for (int j=0; j<N; j++)
         printf("%d ", r[j]);
     printf("\n");
 }
 void print_m(int m[M_SIZE][M_SIZE]) {
     // Print matrix one row at a time
     for (int i=0; i < M_SIZE; i++)
-        print_row(m[i]);
+        print_row(m[i],M_SIZE);
     printf("\n");
 }
 
@@ -61,7 +72,6 @@ void dijkstra_one(int m[M_SIZE][M_SIZE], int src, int dist[M_SIZE]) {
             if (!sptSet[j] && m[j][u] && dist[u] != NC && (dist[u] + m[j][u]) < dist[j])
                 dist[j] = dist[u] + m[j][u];
         }
-            
     }
 }
 
@@ -71,9 +81,22 @@ The results are saved in a dist matrix
 The distance from src->des is available in dist[src][des]
 ** Note this is transposed compared to the connections found in m
 */
-void dijkstra_row(int m[M_SIZE][M_SIZE], int dist[M_SIZE][M_SIZE]) {
+void dijkstra_all(int m[M_SIZE][M_SIZE], int dist[M_SIZE][M_SIZE]) {
     for (int i=0; i<M_SIZE; i++)
         dijkstra_one(m, i, dist[i]);
+}
+
+void *dijkstra_some(void *threadarg) {
+    struct thread_data *my_data;
+    my_data = (struct thread_data *) threadarg;
+    int taskid = my_data->thread_id;
+    int start = my_data->start;
+    int end = my_data->end;
+    int (*m)[M_SIZE] = my_data->m;
+    int (*dist)[M_SIZE] = my_data->d;
+
+    for (int i=start; i<=end; i++)
+        dijkstra_one(m,i,dist[i]);
 }
 
 int main() {
@@ -87,13 +110,7 @@ int main() {
     // Create the matrix of relationships
     // Randomly set every connection to 0 or 1 with SPLIT = % of connections (to adjust sparcity)
     int split = 5;
-    /*
-    Name a more iconic duo than "using malloc" and "program breaking"
-    int **m = (int**)malloc(M_SIZE * sizeof(int*));
-    for (int i=0; i < M_SIZE; i++)
-        m[i] = (int*)malloc(M_SIZE * sizeof(int));
-    */
-    int m[M_SIZE][M_SIZE];
+    int (*m)[M_SIZE] = malloc(sizeof(int[M_SIZE][M_SIZE]));
     for (int i=0; i < M_SIZE; i++) {
         for (int j=0; j < M_SIZE; j++) {
             m[i][j] = rand()%100 < split;
@@ -103,19 +120,53 @@ int main() {
         m[i][i] = 1;
     }
 
+    pthread_t threads[NUM_THREADS]; // Array of all pthread IDs
+    int starts[NUM_THREADS]; // Array of starting values for SP computation for each thread
+    int ends[NUM_THREADS]; // Array of ending values for SP computation for each thread
+    struct thread_data thread_data_array[NUM_THREADS]; // Array of parameters to pass to each thread
+
+    // Divide the workload (somewhat) evenly amongst the threads by setting their start/end indeces
+    for (int i=0; i < NUM_THREADS; i++) {
+        starts[i] = (M_SIZE / NUM_THREADS) * i;
+        ends[i] = (M_SIZE / NUM_THREADS) * (i+1) - 1;
+    }
+    // To account for M_SIZE not being evenly divisible by NUM_THREADS, the last thread handles the remaining values
+    ends[NUM_THREADS-1] = M_SIZE-1;
+
+    printf("Starts = ");
+    print_row(starts,NUM_THREADS);
+    printf("Ends = ");
+    print_row(ends,NUM_THREADS);
+
+    int dist[M_SIZE][M_SIZE];
+    for (int t=0; t<NUM_THREADS; t++) {
+        thread_data_array[t].thread_id = t;
+        thread_data_array[t].start = starts[t];
+        thread_data_array[t].end = ends[t];
+        thread_data_array[t].m = m;
+        thread_data_array[t].d = dist;
+
+        printf("Creating thread %d\n", t);
+        int rc = pthread_create(&threads[t], NULL, dijkstra_some, (void *) &thread_data_array[t]);
+        if (rc) {
+            printf("ERROR; return code from pthread_create() is %d\n", rc);
+            exit(-1);
+        }
+        //dijkstra_some((void *) &thread_data_array[t]);
+    }
+
+    for (int t=0; t<NUM_THREADS; t++) {
+        pthread_join(threads[t],NULL);
+    }
+    
     printf("M = \n");
     print_m(m);
-    int sp[M_SIZE][M_SIZE];
-    dijkstra_row(m,sp);
+    //int sp[M_SIZE][M_SIZE];
+    //dijkstra_all(m,dist);
     printf("SP = \n");
-    print_m(sp);
+    print_m(dist);
 
-    /*
-    Code from a more ambitious me tried using dynamic memory :')
-    for (int i=0; i < M_SIZE; i++)
-        free(m[i]);
     free(m);
-    */
 
     // Equation to get runtime in seconds, see earlier comment for source
     clock_t end = clock();
