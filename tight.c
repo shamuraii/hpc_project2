@@ -5,7 +5,7 @@
 #include <pthread.h>
 
 #define M_SIZE 1000
-#define NC 999 // Weight for No Connection (NC): Must be > M_SIZE in practice
+#define NC 9999 // Weight for No Connection (NC): Must be > M_SIZE in practice
 #define NUM_THREADS 10
 
 // Use struct to pass data to pthreads on creation
