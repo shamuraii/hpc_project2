@@ -78,9 +78,11 @@ void dijkstra_all(int m[M_SIZE][M_SIZE], int dist[M_SIZE][M_SIZE]) {
 int main() {
     // Track the runtime of the program (measures CPU time, NOT wall time, which is desired)
     // Learned from https://stackoverflow.com/questions/5248915/execution-time-of-c-program
+    // After completing all 3 parts, I am not sure the accuracy of this when threading is involved,
+    // as the results shown by this clock are much larger than the wall time the crc provides
     clock_t begin = clock();
 
-    // Set the seed so the matrix M is deterministic (for testing)
+    // Set the seed so the matrix M is deterministic
     srand(0);
 
     // Create the matrix of relationships
@@ -96,14 +98,15 @@ int main() {
         m[i][i] = 1;
     }
 
+    // Create the distance matrix for results
     int (*dist)[M_SIZE] = malloc(sizeof(int[M_SIZE][M_SIZE]));
+    // Calculate ALL shortest path weights
     dijkstra_all(m,dist);
 
-    // I disabled printing results when M_SIZE is large for many reasons
+    // I disabled printing results when M_SIZE is large for a few reasons
     // 1: when large it is hard/impossible to compare at a glance
-    // 2: program spends SIGNIFICANT amount of time just printing and this makes the threading
-    // improvements seem worse than they really are.
-    // I have included results of both small arrays (proof of working) and large ones (just the runtime for comparison)
+    // 2: program spends SIGNIFICANT amount of time just printing and this makes the timing data unreliable
+    // I have included results of printed small arrays (proof of working) and large ones (just for the runtime for comparison)
     if (M_SIZE <= 100) {
         printf("M = \n");
         print_m(m);
@@ -111,6 +114,7 @@ int main() {
         print_m(dist);
     }
 
+    // Take that valgrind!
     free(m);
     free(dist);
 

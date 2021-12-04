@@ -11,11 +11,11 @@
 // Use struct to pass data to pthreads on creation
 // Based on https://hpc-tutorials.llnl.gov/posix/example_code/hello_arg2.c
 struct thread_data {
-    int thread_id;
-    int start;
-    int end;
-    int (*d)[M_SIZE];
-    int (*m)[M_SIZE];
+    int thread_id; // # of thread (serves no purpose here)
+    int start; // node to start calculating SPs
+    int end; // node to end calculating SPs
+    int (*d)[M_SIZE]; // Pointer to dist matrix for results
+    int (*m)[M_SIZE]; // Pointer to M matrix to access graph
 };
 
 // I wrote these prints as a proof-of-concept regarding passing a single row of the matrix to a function
@@ -86,6 +86,16 @@ void dijkstra_all(int m[M_SIZE][M_SIZE], int dist[M_SIZE][M_SIZE]) {
         dijkstra_one(m, i, dist[i]);
 }
 
+/*
+This function is the one ran by each pthread
+It begins by parsing the arguments into the appropriate data structure to access critical info
+It then simply runs dijkstra_one on each of its assigned nodes (from start:end inclusive)
+The results are stored as it goes into the row dist[i]
+dist is an M_SIZE*M_SIZE matrix that all threads are given access to
+This is okay, however since no threads have overlapping writes, as each is assigned different rows
+of dist to compute. Meaning, all threads can change dist as they progress and no locks are necessary, nice!
+M is also shared between all threads, but M is only read, so no worries there either
+*/
 void *dijkstra_some(void *threadarg) {
     struct thread_data *my_data;
     my_data = (struct thread_data *) threadarg;
@@ -102,6 +112,8 @@ void *dijkstra_some(void *threadarg) {
 int main() {
     // Track the runtime of the program (measures CPU time, NOT wall time, which is desired)
     // Learned from https://stackoverflow.com/questions/5248915/execution-time-of-c-program
+    // After completing all 3 parts, I am not sure the accuracy of this when threading is involved,
+    // as the results shown by this clock are much larger than the wall time the crc provides
     clock_t begin = clock();
 
     // Set the seed so the matrix M is deterministic (for testing)
@@ -126,6 +138,8 @@ int main() {
     struct thread_data thread_data_array[NUM_THREADS]; // Array of parameters to pass to each thread
 
     // Divide the workload (somewhat) evenly amongst the threads by setting their start/end indeces
+    // If NUM_THREADS > M_SIZE, this will break. I do not plan to fix that, just don't do that
+    // To fix that, check if (ends[i] = -1) and don't then dont create the thread / ignore results, etc.
     for (int i=0; i < NUM_THREADS; i++) {
         starts[i] = (M_SIZE / NUM_THREADS) * i;
         ends[i] = (M_SIZE / NUM_THREADS) * (i+1) - 1;
@@ -133,28 +147,35 @@ int main() {
     // To account for M_SIZE not being evenly divisible by NUM_THREADS, the last thread handles the remaining values
     ends[NUM_THREADS-1] = M_SIZE-1;
 
+    // Print which nodes each thread will process
     printf("Starts = ");
     print_row(starts,NUM_THREADS);
     printf("Ends = ");
     print_row(ends,NUM_THREADS);
 
+    // Create dist matrix for all threads to share access to, and for main to access the results of the threads
     int (*dist)[M_SIZE] = malloc(sizeof(int[M_SIZE][M_SIZE]));
     for (int t=0; t<NUM_THREADS; t++) {
+        // Fill struct with appropriate values
         thread_data_array[t].thread_id = t;
         thread_data_array[t].start = starts[t];
         thread_data_array[t].end = ends[t];
         thread_data_array[t].m = m;
         thread_data_array[t].d = dist;
 
+        // Create the pthread by passing the struct of parameters/outputs
         printf("Creating thread %d\n", t);
         int rc = pthread_create(&threads[t], NULL, dijkstra_some, (void *) &thread_data_array[t]);
         if (rc) {
+            // Unlikely, but in case of error catch it
+            // https://hpc-tutorials.llnl.gov/posix/example_code/hello_arg2.c
             printf("ERROR; return code from pthread_create() is %d\n", rc);
             exit(-1);
         }
-        //dijkstra_some((void *) &thread_data_array[t]);
     }
 
+    // Join all the threads to ensure they have completed running
+    // before accessing the results in dist
     for (int t=0; t<NUM_THREADS; t++) {
         pthread_join(threads[t],NULL);
     }

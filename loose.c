@@ -69,6 +69,8 @@ void dijkstra_one(int m[M_SIZE][M_SIZE], int src, int dist[M_SIZE]) {
 int main() {
     // Track the runtime of the program (measures CPU time, NOT wall time, which is desired)
     // Learned from https://stackoverflow.com/questions/5248915/execution-time-of-c-program
+    // After completing all 3 parts, I am not sure the accuracy of this when threading is involved,
+    // as the results shown by this clock are much larger than the wall time the crc provides
     clock_t begin = clock();
 
     // Set the seed so the matrix M is deterministic
@@ -113,42 +115,62 @@ int main() {
     if (world_rank == world_size - 1)
         end = M_SIZE - 1;
 
-    // Print off a message to signal node is running
+    // Print a message to signal node is running
     printf("Processor %s, rank %d / %d: start = %d, end = %d\n", processor_name, world_rank, world_size, start, end);
 
     // Run dijkstras on this processors portion of the nodes
+    // Store the results into appropriate rows of a local dist matrix
+    // Memory could be saved by only creating dist to be [end-start][M_SIZE], but I chose
+    // to make dist the full size so that it is 1: known at compile time, 2: the same size for all processors
+    // Point 2 will come in handy when MPI_SEND/RECV are called on the entire contiguous memory location at once
     int (*dist)[M_SIZE] = malloc(sizeof(int[M_SIZE][M_SIZE]));
     for (int i=start; i<=end; i++)
         dijkstra_one(m,i,dist[i]);
     
     // Share data with processor 0
     // Code to send MxM matrix at once from https://stackoverflow.com/questions/5901476/sending-and-receiving-2d-array-over-mpi
+    // This works since I created dist as a contiguous memory block with M_SIZE * M_SIZE elements
     if (world_rank != 0) {
         printf("Proc: %d sending dist\n", world_rank);
         MPI_Send(&(dist[0][0]), M_SIZE*M_SIZE, MPI_INT, 0, 0, MPI_COMM_WORLD);
     } else {
-        // This is PROC_0 and is responsible for assembling and combining all results together
+        // This is PROC_0 and is responsible for assembling / combining all results together
         // Create buffer for results to be recieved into
+        // Again, proc_dist being the same size for all processors is coming in handy here
+        // The same buffer can be reused for all recieves and then ultimately freed
         int (*proc_dist)[M_SIZE] = malloc(sizeof(int[M_SIZE][M_SIZE]));
         for (int i = 1; i < world_size; i++) {
             // Await distance matrix results from PROC_i
             MPI_Recv(&(proc_dist[0][0]), M_SIZE*M_SIZE, MPI_INT, i, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
             // Use world_rank to determine role in computations
+            // I could have had each processor send their start and end data with MPI_SEND
+            // I opted not to, since the overhead seemed like it would not be worth when
+            // compared to 3 simple arithmetic operations
             int proc_start = (M_SIZE / world_size) * i;
             int proc_end = (M_SIZE / world_size) * (i + 1) - 1;
             if (i == world_size - 1)
                 proc_end = M_SIZE - 1;
 
             // Combine relevant rows into main dist matrix
+            // We know that the results of a PROC_i saved their results
+            // into the rows of dist from dist[start] : dist[end]
+            // I loop through each of these rows and copy the contiguos memory
+            // into the main dist matrix stored in proc_0
+            // I *could* have done this in 1 line with something like
+            // memcpy(dist[r], proc_dist[r], sizeof(int[M_SIZE][proc_end-proc_start]));
+            // but that seems very sketchy to me
             for (int r=proc_start; r <= proc_end; r++)
                 memcpy(dist[r], proc_dist[r], sizeof(int[M_SIZE]));
         }
+        // Our trusty buffer can now be freed
+        // since all messages are completed
         free(proc_dist);
 
-        // *lead* node prints the matrix (for debugging)
+        // Proc_0 prints the matrix (for debugging)
         if (world_rank == 0) {
             // Printing will be interrupted by other processor prints, and is not necessary outside testing
+            // But it is sufficient enough to determine accuracy/functionality
             if (M_SIZE <= 100) {
                 printf("M = \n");
                 print_m(m);
